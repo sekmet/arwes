@@ -73,7 +73,7 @@ deactivated.
 - `hasExited(): boolean` - If the node has exited in the system flow at least once.
 - `getDurationIn(): number` - Get the duration the node lasts entering,
 including `delay`.
-- `getDurationOut(); number` - Get the duration the node lasts exiting.
+- `getDurationOut(): number` - Get the duration the node lasts exiting.
 - `updateDuration(duration: number | Object)` - Update the animation duration.
 
 > To access these APIs, you would use an object referenced as `EnergyInterface`.

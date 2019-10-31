@@ -41,6 +41,11 @@ class Component extends React.PureComponent {
   }
 
   getInitialState () {
+    // The initial state is defined with some initial props. Though it is considered
+    // an anti-pattern, energy flow needs to have a behavior from the beginning
+    // according to props and it needs to be updated depending on future changes
+    // selectively.
+
     const flowValue = this.isAnimate() ? EXITED : ENTERED;
     const energyInterface = this.getEnergyInterface(flowValue);
     return { flowValue, energyInterface };
