@@ -40,7 +40,9 @@ AnimationProvider.propTypes = {
     PropTypes.shape({
       enter: PropTypes.number,
       exit: PropTypes.number,
-      delay: PropTypes.number
+      stagger: PropTypes.number,
+      delay: PropTypes.number,
+      offset: PropTypes.number
     })
   ]),
   children: PropTypes.any

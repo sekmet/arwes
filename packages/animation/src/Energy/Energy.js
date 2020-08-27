@@ -1,13 +1,19 @@
+/* eslint-disable react/no-unused-prop-types */
+
 import React from 'react';
 import PropTypes from 'prop-types';
 import { useAnimation } from '../useAnimation';
 import { EnergyContext } from '../EnergyContext';
 import { useEnergy } from '../useEnergy';
-
-const ENTERING = 'entering';
-const ENTERED = 'entered';
-const EXITING = 'exiting';
-const EXITED = 'exited';
+import { makeIsAnimate } from '../makeIsAnimate';
+import { makeIsRoot } from '../makeIsRoot';
+import { makeIsActivated } from '../makeIsActivated';
+import { makeIsOutsourced } from '../makeIsOutsourced';
+import { makeGetEnergyInterface } from '../makeGetEnergyInterface';
+import { makeDurationManager } from '../makeDurationManager';
+import { makeFlowManager } from '../makeFlowManager';
+import { makeScheduler } from '../makeScheduler';
+import { ENERGY, ENTERING, ENTERED, EXITING, EXITED } from '../constants';
 
 class Component extends React.PureComponent {
   static propTypes = {
@@ -19,11 +25,13 @@ class Component extends React.PureComponent {
       PropTypes.shape({
         enter: PropTypes.number,
         exit: PropTypes.number,
-        delay: PropTypes.number
+        delay: PropTypes.number,
+        offset: PropTypes.number
       })
     ]),
     merge: PropTypes.bool,
-    onActivate: PropTypes.func,
+    imperative: PropTypes.bool,
+    onActivation: PropTypes.func,
     animationContext: PropTypes.any,
     parentEnergyContext: PropTypes.any,
     children: PropTypes.any
@@ -32,51 +40,39 @@ class Component extends React.PureComponent {
   constructor () {
     super(...arguments);
 
+    this.isAnimate = makeIsAnimate(this);
+    this.isRoot = makeIsRoot(this);
+    this.isActivated = makeIsActivated(this);
+    this.isOutsourced = makeIsOutsourced(this);
+    this.getEnergyInterface = makeGetEnergyInterface(this);
+    this.durationManager = makeDurationManager(this);
+    this.flowManager = makeFlowManager(this);
+    this.scheduler = makeScheduler();
+
+    this.type = ENERGY;
     this.state = this.getInitialState();
     this.flowHasEntered = false;
     this.flowHasExited = false;
-    this.activated = false;
-    this.customDuration = null;
-    this.scheduleTimeout = null;
   }
 
   getInitialState () {
     const flowValue = this.isAnimate() ? EXITED : ENTERED;
     const energyInterface = this.getEnergyInterface(flowValue);
+
     return { flowValue, energyInterface };
   }
 
   componentDidMount () {
-    const animate = this.isAnimate();
-    const activated = this.isActivated();
-
-    if (animate && activated) {
-      this.enter();
-    }
+    this.flowManager.checkMount();
   }
 
   componentDidUpdate () {
-    const animate = this.isAnimate();
-    const activated = this.isActivated();
-
-    if (animate && activated !== this.activated) {
-      this.activated = activated;
-
-      if (this.props.onActivate) {
-        this.props.onActivate(activated);
-      }
-
-      if (activated) {
-        this.enter();
-      }
-      else {
-        this.exit();
-      }
-    }
+    this.flowManager.checkUpdate();
   }
 
   componentWillUnmount () {
-    this.unschedule();
+    this.flowManager.checkUnmount();
+    this.scheduler.stopAll();
   }
 
   render () {
@@ -89,6 +85,7 @@ class Component extends React.PureComponent {
 
   setFlowValue (flowValue) {
     const energyInterface = this.getEnergyInterface(flowValue);
+
     this.setState(
       state => ({ ...state, flowValue, energyInterface }),
       () => {
@@ -106,111 +103,30 @@ class Component extends React.PureComponent {
     return this.state.energyInterface.flow;
   }
 
-  getEnergyInterface (flowValue) {
-    const { getDuration, getDurationIn, getDurationOut, hasEntered, hasExited } = this;
-    const flow = Object.freeze({ value: flowValue, [flowValue]: true });
-
-    return Object.freeze({
-      getDuration,
-      getDurationIn,
-      getDurationOut,
-      hasEntered,
-      hasExited,
-      flow
-    });
+  getDuration () {
+    return this.durationManager.get();
   }
 
-  isAnimate () {
-    let animate = true;
-
-    const providedAnimate = this.props.animationContext.animate;
-    if (providedAnimate !== void 0) {
-      animate = providedAnimate;
-    }
-
-    const propAnimate = this.props.animate;
-    if (propAnimate !== void 0) {
-      animate = propAnimate;
-    }
-
-    return animate;
+  updateDuration (duration) {
+    this.durationManager.update(duration);
   }
 
-  isRoot () {
-    let root = true;
-
-    if (this.props.parentEnergyContext) {
-      root = false;
-    }
-
-    if (this.props.root !== void 0) {
-      root = this.props.root;
-    }
-
-    return root;
-  }
-
-  getDuration = () => {
-    const defaultDuration = { enter: 200, exit: 200, delay: 0 };
-
-    const providedDuration = this.props.animationContext.duration;
-
-    const propValue = this.props.duration;
-    const propDuration = typeof propValue === 'number'
-      ? { enter: propValue, exit: propValue }
-      : propValue;
-
-    const duration = {
-      ...defaultDuration,
-      ...providedDuration,
-      ...propDuration,
-      ...this.customDuration
-    };
-
-    return duration;
-  }
-
-  getDurationIn = () => {
-    const duration = this.getDuration();
-    return duration.enter + duration.delay;
-  }
-
-  getDurationOut = () => {
-    const duration = this.getDuration();
-    return duration.exit;
-  }
-
-  updateDuration = duration => {
-    const customDuration = typeof duration === 'number'
-      ? { enter: duration, exit: duration }
-      : duration;
-    this.customDuration = customDuration;
-  }
-
-  hasEntered = () => {
+  hasEntered () {
     return this.flowHasEntered;
   }
 
-  hasExited = () => {
+  hasExited () {
     return this.flowHasExited;
   }
 
-  isActivated () {
-    if (this.isRoot()) {
-      if (this.props.activate !== void 0) {
-        return this.props.activate;
-      }
-      return true;
+  updateActivation (activated) {
+    // TODO: User should not be able to call this function, when this component
+    // is outsourced by being a <Stream />'s child.
+    if (this.isOutsourced()) {
+      activated ? this.enter() : this.exit();
     }
     else {
-      const parentFlow = this.props.parentEnergyContext.flow;
-
-      if (this.props.merge) {
-        return !!(parentFlow.entering || parentFlow.entered);
-      }
-      else {
-        return !!parentFlow.entered;
-      }
+      throw new Error('"updateActivation" can not be called if component is not outsourced.');
     }
   }
 
@@ -222,13 +138,16 @@ class Component extends React.PureComponent {
     }
 
     const duration = this.getDuration();
-    const delay = flowValue === EXITED ? duration.delay : 0;
 
-    this.schedule(delay, () => {
+    this.scheduler.start(0, duration.delay, () => {
       const duration = this.getDuration();
 
+      if (this.props.onActivation) {
+        this.props.onActivation(true);
+      }
+
       this.setFlowValue(ENTERING);
-      this.schedule(duration.enter, () => this.setFlowValue(ENTERED));
+      this.scheduler.start(0, duration.enter, () => this.setFlowValue(ENTERED));
     });
   }
 
@@ -239,21 +158,16 @@ class Component extends React.PureComponent {
       return;
     }
 
-    this.schedule(0, () => {
+    this.scheduler.start(0, 0, () => {
       const duration = this.getDuration();
 
+      if (this.props.onActivation) {
+        this.props.onActivation(false);
+      }
+
       this.setFlowValue(EXITING);
-      this.schedule(duration.exit, () => this.setFlowValue(EXITED));
+      this.scheduler.start(0, duration.exit, () => this.setFlowValue(EXITED));
     });
-  }
-
-  unschedule () {
-    clearTimeout(this.scheduleTimeout);
-  }
-
-  schedule (time, callback) {
-    this.unschedule();
-    this.scheduleTimeout = setTimeout(callback, time);
   }
 }
 
